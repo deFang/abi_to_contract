@@ -41,6 +41,12 @@ export default function ContractInteraction() {
   const [methods, setMethods] = useState<ContractMethod[]>([]);
   const [error, setError] = useState<string>('');
   const [results, setResults] = useState<MethodResult[]>([]);
+  
+  // Advanced settings
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [customRpcUrl, setCustomRpcUrl] = useState('');
+  const [blockNumber, setBlockNumber] = useState('');
+  const [provider, setProvider] = useState<ethers.Provider | null>(null);
 
   const handleAbiChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     setAbi(event.target.value);
@@ -48,6 +54,23 @@ export default function ContractInteraction() {
 
   const handleContractAddressChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setContractAddress(event.target.value);
+  };
+
+  const handleCustomRpcChange = async (url: string) => {
+    setCustomRpcUrl(url);
+    if (url) {
+      try {
+        const newProvider = new ethers.JsonRpcProvider(url);
+        await newProvider.getBlockNumber(); // Test the connection
+        setProvider(newProvider);
+        setError('');
+      } catch (err) {
+        setError('Invalid RPC URL or connection failed');
+        setProvider(null);
+      }
+    } else {
+      setProvider(null);
+    }
   };
 
   const generateContract = async () => {
@@ -67,7 +90,9 @@ export default function ContractInteraction() {
         throw new Error('Invalid ABI format');
       }
 
-      const contract = new ethers.Contract(contractAddress, parsedAbi, signer);
+      // Use custom provider if available, otherwise use signer's provider
+      const contractProvider = provider || signer;
+      const contract = new ethers.Contract(contractAddress, parsedAbi, contractProvider);
       setContract(contract);
 
       // Filter and sort methods
@@ -155,7 +180,22 @@ export default function ContractInteraction() {
     if (!contract) return;
 
     try {
-      const result = await contract[method.name](...args);
+      let result;
+      if (method.stateMutability === 'view' || method.stateMutability === 'pure') {
+        // For view/pure calls, use block number if specified
+        const methodFn = contract.getFunction(method.name);
+        if (blockNumber && !isNaN(Number(blockNumber))) {
+          result = await methodFn.staticCall(...args, { blockTag: Number(blockNumber) });
+        } else {
+          result = await methodFn(...args);
+        }
+      } else {
+        // For non-view methods, always use signer
+        const contractWithSigner = contract.connect(signer);
+        const methodFn = contractWithSigner.getFunction(method.name);
+        result = await methodFn(...args);
+      }
+
       console.log('Raw result:', result);
       
       // Handle transaction result differently from view/pure call result
@@ -186,7 +226,7 @@ export default function ContractInteraction() {
         const newResult: MethodResult = {
           methodName: method.name,
           timestamp: new Date().toISOString(),
-          result: formattedResult,
+          result: `${blockNumber ? `[Block ${blockNumber}]\n` : ''}${formattedResult}`,
           error: false
         };
         setResults(prev => [newResult, ...prev].slice(0, 10));
@@ -225,6 +265,45 @@ export default function ContractInteraction() {
           className="w-full p-2 border rounded-md"
           placeholder="0x..."
         />
+      </div>
+
+      <div className="space-y-2">
+        <button
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="text-sm text-blue-500 hover:text-blue-600"
+        >
+          {showAdvanced ? '- Hide Advanced Settings' : '+ Show Advanced Settings'}
+        </button>
+
+        {showAdvanced && (
+          <div className="p-4 bg-gray-50 rounded-md space-y-4">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-700">
+                Custom RPC URL (Optional)
+              </label>
+              <input
+                type="text"
+                value={customRpcUrl}
+                onChange={(e) => handleCustomRpcChange(e.target.value)}
+                className="w-full p-2 border rounded-md"
+                placeholder="https://..."
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-700">
+                Block Number (Optional, for view/pure calls)
+              </label>
+              <input
+                type="text"
+                value={blockNumber}
+                onChange={(e) => setBlockNumber(e.target.value)}
+                className="w-full p-2 border rounded-md"
+                placeholder="Enter block number..."
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       <button
