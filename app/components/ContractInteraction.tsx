@@ -4,9 +4,16 @@ import { useState } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 
+interface ContractMethodOutput {
+  name: string;
+  type: string;
+  components?: ContractMethodOutput[];
+}
+
 interface ContractMethod {
   name: string;
   inputs: { name: string; type: string }[];
+  outputs: ContractMethodOutput[];
   stateMutability: string;
   type: string;
 }
@@ -15,7 +22,15 @@ interface AbiItem {
   type: string;
   name?: string;
   inputs?: { name: string; type: string }[];
+  outputs?: { name: string; type: string }[];
   stateMutability?: string;
+}
+
+interface MethodResult {
+  methodName: string;
+  timestamp: string;
+  result: string;
+  error: boolean;
 }
 
 export default function ContractInteraction() {
@@ -25,6 +40,7 @@ export default function ContractInteraction() {
   const [contract, setContract] = useState<ethers.Contract | null>(null);
   const [methods, setMethods] = useState<ContractMethod[]>([]);
   const [error, setError] = useState<string>('');
+  const [results, setResults] = useState<MethodResult[]>([]);
 
   const handleAbiChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     setAbi(event.target.value);
@@ -60,12 +76,14 @@ export default function ContractInteraction() {
           item.type === 'function' && 
           typeof item.name === 'string' && 
           Array.isArray(item.inputs) &&
+          Array.isArray(item.outputs) &&
           typeof item.stateMutability === 'string'
         )
         .sort((a, b) => a.name.localeCompare(b.name));
 
       setMethods(contractMethods);
       setError('');
+      setResults([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
       setContract(null);
@@ -73,23 +91,116 @@ export default function ContractInteraction() {
     }
   };
 
-  const handleMethodCall = async (method: ContractMethod, formData: FormData) => {
+  const formatResult = (result: unknown, method: ContractMethod): string => {
+    if (result === null || result === undefined) {
+      return 'null';
+    }
+
+    // Handle array-like results (including tuples)
+    if (result && typeof result === 'object' && !Array.isArray(result)) {
+      const resultObj = result as { [key: string]: any };
+      
+      // Check if it's a numeric-keyed object (like [0,1,2] but as an object)
+      const keys = Object.keys(resultObj);
+      const isNumericKeys = keys.every(key => !isNaN(Number(key)));
+      
+      if (isNumericKeys) {
+        // Create an array of formatted values using the method outputs
+        const formattedValues = method.outputs.map((output, index) => {
+          const value = resultObj[index];
+          const name = output.name.replace(/^_/, ''); // Remove leading underscore
+          
+          let formattedValue: string;
+          if (typeof value === 'bigint') {
+            formattedValue = value.toString();
+          } else if (typeof value === 'string' && value.startsWith('0x')) {
+            formattedValue = value;
+          } else if (typeof value === 'number' || (typeof value === 'string' && !isNaN(Number(value)))) {
+            formattedValue = BigInt(value).toString();
+          } else {
+            formattedValue = String(value);
+          }
+          
+          return `${name}: ${formattedValue}`;
+        });
+        
+        return `{\n  ${formattedValues.join(',\n  ')}\n}`;
+      }
+    }
+
+    // Handle arrays
+    if (Array.isArray(result)) {
+      const formattedValues = result.map((value, index) => {
+        const name = method.outputs[index]?.name?.replace(/^_/, '') || `output${index}`;
+        return `${name}: ${formatResult(value, method)}`;
+      });
+      return `{\n  ${formattedValues.join(',\n  ')}\n}`;
+    }
+
+    // Handle single values
+    if (typeof result === 'bigint') {
+      return result.toString();
+    }
+    if (typeof result === 'string' && result.startsWith('0x')) {
+      return result;
+    }
+    if (typeof result === 'number' || (typeof result === 'string' && !isNaN(Number(result)))) {
+      return BigInt(result).toString();
+    }
+    
+    return String(result);
+  };
+
+  const handleMethodCall = async (method: ContractMethod, ...args: any[]) => {
     if (!contract) return;
 
     try {
-      const args = method.inputs.map((input) => {
-        const value = formData.get(input.name);
-        // Convert string values to appropriate types
-        if (input.type === 'uint256' || input.type === 'uint') {
-          return BigInt(value as string);
-        }
-        return value;
-      });
-
       const result = await contract[method.name](...args);
-      console.log('Method call result:', result);
-    } catch (err) {
-      console.error('Error calling method:', err);
+      console.log('Raw result:', result);
+      
+      // Handle transaction result differently from view/pure call result
+      if (method.stateMutability !== 'view' && method.stateMutability !== 'pure') {
+        // For transactions, wait for the transaction to be mined
+        const tx = result; // This is a TransactionResponse
+        const newResult: MethodResult = {
+          methodName: method.name,
+          timestamp: new Date().toISOString(),
+          result: `Transaction sent!\nTransaction Hash: ${tx.hash}\nWaiting for confirmation...`,
+          error: false
+        };
+        setResults(prev => [newResult, ...prev].slice(0, 10));
+        
+        // Wait for transaction to be mined
+        const receipt = await tx.wait();
+        const updatedResult: MethodResult = {
+          methodName: method.name,
+          timestamp: new Date().toISOString(),
+          result: `Transaction confirmed!\nTransaction Hash: ${receipt.hash}\nBlock Number: ${receipt.blockNumber}\nGas Used: ${receipt.gasUsed.toString()}`,
+          error: false
+        };
+        setResults(prev => [updatedResult, ...prev.slice(1)]);
+      } else {
+        // For view/pure calls, format the result as before
+        const formattedResult = formatResult(result, method);
+        console.log('Formatted result:', formattedResult);
+        const newResult: MethodResult = {
+          methodName: method.name,
+          timestamp: new Date().toISOString(),
+          result: formattedResult,
+          error: false
+        };
+        setResults(prev => [newResult, ...prev].slice(0, 10));
+      }
+    } catch (error) {
+      console.error('Error calling method:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const newResult: MethodResult = {
+        methodName: method.name,
+        timestamp: new Date().toISOString(),
+        result: errorMessage,
+        error: true
+      };
+      setResults(prev => [newResult, ...prev].slice(0, 10));
     }
   };
 
@@ -134,7 +245,9 @@ export default function ContractInteraction() {
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  handleMethodCall(method, new FormData(e.currentTarget));
+                  const formData = new FormData(e.currentTarget);
+                  const args = method.inputs.map(input => formData.get(input.name));
+                  handleMethodCall(method, ...args);
                 }}
                 className="mt-2 space-y-2"
               >
@@ -160,10 +273,29 @@ export default function ContractInteraction() {
                     : 'Send Transaction'}
                 </button>
               </form>
+
+              {/* Show method-specific results */}
+              {results.filter(r => r.methodName === method.name).map((result) => (
+                <div key={result.timestamp} 
+                     className={`mt-4 p-3 rounded-md ${result.error ? 'bg-red-50' : 'bg-green-50'}`}>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-500">
+                      {new Date(result.timestamp).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  {result.error ? (
+                    <div className="text-red-600 mt-1">{result.result}</div>
+                  ) : (
+                    <pre className="mt-1 font-mono text-sm break-all whitespace-pre-wrap overflow-x-auto">
+                      {result.result}
+                    </pre>
+                  )}
+                </div>
+              ))}
             </div>
           ))}
         </div>
       )}
     </div>
   );
-} 
+}
