@@ -26,6 +26,11 @@ interface AbiItem {
   stateMutability?: string;
 }
 
+// Add new type for contract result object
+interface ContractResultObject {
+  [key: string]: string | number | boolean | bigint | ContractResultObject | Array<unknown>;
+}
+
 interface MethodResult {
   methodName: string;
   timestamp: string;
@@ -64,8 +69,9 @@ export default function ContractInteraction() {
         await newProvider.getBlockNumber(); // Test the connection
         setProvider(newProvider);
         setError('');
-      } catch (err) {
-        setError('Invalid RPC URL or connection failed');
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Connection failed';
+        setError(`Invalid RPC URL or ${errorMessage}`);
         setProvider(null);
       }
     } else {
@@ -116,6 +122,9 @@ export default function ContractInteraction() {
     }
   };
 
+  // Define input types for contract methods
+  type MethodInputValue = string | number | boolean | bigint;
+
   const formatResult = (result: unknown, method: ContractMethod): string => {
     if (result === null || result === undefined) {
       return 'null';
@@ -123,7 +132,7 @@ export default function ContractInteraction() {
 
     // Handle array-like results (including tuples)
     if (result && typeof result === 'object' && !Array.isArray(result)) {
-      const resultObj = result as { [key: string]: any };
+      const resultObj = result as ContractResultObject;
       
       // Check if it's a numeric-keyed object (like [0,1,2] but as an object)
       const keys = Object.keys(resultObj);
@@ -132,7 +141,7 @@ export default function ContractInteraction() {
       if (isNumericKeys) {
         // Create an array of formatted values using the method outputs
         const formattedValues = method.outputs.map((output, index) => {
-          const value = resultObj[index];
+          const value = resultObj[index.toString()];
           const name = output.name.replace(/^_/, ''); // Remove leading underscore
           
           let formattedValue: string;
@@ -141,7 +150,7 @@ export default function ContractInteraction() {
           } else if (typeof value === 'string' && value.startsWith('0x')) {
             formattedValue = value;
           } else if (typeof value === 'number' || (typeof value === 'string' && !isNaN(Number(value)))) {
-            formattedValue = BigInt(value).toString();
+            formattedValue = BigInt(value.toString()).toString();
           } else {
             formattedValue = String(value);
           }
@@ -176,7 +185,7 @@ export default function ContractInteraction() {
     return String(result);
   };
 
-  const handleMethodCall = async (method: ContractMethod, ...args: any[]) => {
+  const handleMethodCall = async (method: ContractMethod, ...args: MethodInputValue[]) => {
     if (!contract) return;
 
     try {
@@ -325,7 +334,17 @@ export default function ContractInteraction() {
                 onSubmit={(e) => {
                   e.preventDefault();
                   const formData = new FormData(e.currentTarget);
-                  const args = method.inputs.map(input => formData.get(input.name));
+                  const args = method.inputs.map(input => {
+                    const value = formData.get(input.name);
+                    // Convert form values based on input type
+                    if (input.type.startsWith('uint') || input.type.startsWith('int')) {
+                      return value ? BigInt(value.toString()) : BigInt(0);
+                    }
+                    if (input.type === 'bool') {
+                      return value === 'true';
+                    }
+                    return value?.toString() || '';
+                  });
                   handleMethodCall(method, ...args);
                 }}
                 className="mt-2 space-y-2"
