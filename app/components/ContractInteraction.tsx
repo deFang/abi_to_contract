@@ -367,7 +367,7 @@ export default function ContractInteraction() {
                       // If input is not a hex string, convert to bytes32
                       try {
                         return ethers.hexlify(ethers.toUtf8Bytes(strValue)).padEnd(66, '0');
-                      } catch (error) {
+                      } catch {
                         return ethers.ZeroHash;
                       }
                     }
