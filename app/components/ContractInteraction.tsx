@@ -254,13 +254,15 @@ export default function ContractInteraction() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 max-w-4xl mx-auto p-4">
+      <h1 className="text-2xl font-bold text-gray-800 mb-6">ABI Contract Interaction Tool</h1>
+      
       <div className="space-y-2">
         <label className="block text-sm font-medium text-gray-700">Contract ABI</label>
         <textarea
           value={abi}
           onChange={handleAbiChange}
-          className="w-full h-32 p-2 border rounded-md"
+          className="w-full h-32 p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           placeholder="Paste your contract ABI here..."
         />
       </div>
@@ -271,7 +273,7 @@ export default function ContractInteraction() {
           type="text"
           value={contractAddress}
           onChange={handleContractAddressChange}
-          className="w-full p-2 border rounded-md"
+          className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           placeholder="0x..."
         />
       </div>
@@ -279,13 +281,13 @@ export default function ContractInteraction() {
       <div className="space-y-2">
         <button
           onClick={() => setShowAdvanced(!showAdvanced)}
-          className="text-sm text-blue-500 hover:text-blue-600"
+          className="text-sm text-blue-600 hover:text-blue-700 font-medium"
         >
           {showAdvanced ? '- Hide Advanced Settings' : '+ Show Advanced Settings'}
         </button>
 
         {showAdvanced && (
-          <div className="p-4 bg-gray-50 rounded-md space-y-4">
+          <div className="p-4 bg-gray-50 border border-gray-200 rounded-md space-y-4">
             <div className="space-y-2">
               <label className="block text-sm font-medium text-gray-700">
                 Custom RPC URL (Optional)
@@ -294,7 +296,7 @@ export default function ContractInteraction() {
                 type="text"
                 value={customRpcUrl}
                 onChange={(e) => handleCustomRpcChange(e.target.value)}
-                className="w-full p-2 border rounded-md"
+                className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 placeholder="https://..."
               />
             </div>
@@ -307,7 +309,7 @@ export default function ContractInteraction() {
                 type="text"
                 value={blockNumber}
                 onChange={(e) => setBlockNumber(e.target.value)}
-                className="w-full p-2 border rounded-md"
+                className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 placeholder="Enter block number..."
               />
             </div>
@@ -317,54 +319,93 @@ export default function ContractInteraction() {
 
       <button
         onClick={generateContract}
-        className="px-4 py-2 text-white bg-blue-500 rounded-md hover:bg-blue-600"
+        className="w-full px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
       >
         Generate Contract
       </button>
 
-      {error && <div className="p-2 text-red-500 bg-red-100 rounded-md">{error}</div>}
+      {error && (
+        <div className="p-3 text-red-700 bg-red-50 border border-red-200 rounded-md">
+          {error}
+        </div>
+      )}
 
       {methods.length > 0 && (
-        <div className="mt-4 space-y-4">
-          <h3 className="text-lg font-medium">Contract Methods</h3>
+        <div className="mt-6 space-y-6">
+          <h3 className="text-xl font-semibold text-gray-800">Contract Methods</h3>
           {methods.map((method) => (
-            <div key={method.name} className="p-4 border rounded-md">
-              <h4 className="font-medium">{method.name}</h4>
+            <div key={method.name} className="p-4 border border-gray-200 rounded-lg shadow-sm hover:shadow-md transition-shadow">
+              <h4 className="text-lg font-medium text-gray-800">{method.name}</h4>
+              <div className="mt-2 text-sm text-gray-500">
+                {method.stateMutability === 'view' || method.stateMutability === 'pure' 
+                  ? '🔍 Read-Only Method'
+                  : '✏️ Write Method'}
+              </div>
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
                   const formData = new FormData(e.currentTarget);
                   const args = method.inputs.map(input => {
                     const value = formData.get(input.name);
-                    // Convert form values based on input type
+                    const strValue = value?.toString() || '';
+
+                    // Handle different input types
+                    if (input.type === 'bytes32') {
+                      // Handle empty input
+                      if (!strValue) {
+                        return ethers.ZeroHash;
+                      }
+                      // If input is already a hex string of correct length, use it
+                      if (strValue.startsWith('0x') && strValue.length === 66) {
+                        return strValue;
+                      }
+                      // If input is a shorter hex string, pad it with zeros
+                      if (strValue.startsWith('0x')) {
+                        const hexValue = strValue.slice(2).padEnd(64, '0');
+                        return `0x${hexValue}`;
+                      }
+                      // If input is not a hex string, convert to bytes32
+                      try {
+                        return ethers.hexlify(ethers.toUtf8Bytes(strValue)).padEnd(66, '0');
+                      } catch (error) {
+                        return ethers.ZeroHash;
+                      }
+                    }
                     if (input.type.startsWith('uint') || input.type.startsWith('int')) {
                       return value ? BigInt(value.toString()) : BigInt(0);
                     }
                     if (input.type === 'bool') {
                       return value === 'true';
                     }
-                    return value?.toString() || '';
+                    if (input.type === 'address') {
+                      return strValue || ethers.ZeroAddress;
+                    }
+                    return strValue;
                   });
                   handleMethodCall(method, ...args);
                 }}
-                className="mt-2 space-y-2"
+                className="mt-4 space-y-3"
               >
                 {method.inputs.map((input) => (
                   <div key={input.name} className="space-y-1">
-                    <label className="block text-sm text-gray-600">
-                      {input.name} ({input.type})
+                    <label className="block text-sm font-medium text-gray-700">
+                      {input.name} <span className="text-gray-500">({input.type})</span>
                     </label>
                     <input
                       type="text"
                       name={input.name}
-                      className="w-full p-2 border rounded-md"
-                      placeholder={`Enter ${input.type}`}
+                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder={input.type === 'bytes32' ? 'Enter hex string (0x...) or value to convert' : `Enter ${input.type}`}
                     />
                   </div>
                 ))}
                 <button
                   type="submit"
-                  className="px-4 py-2 text-white bg-green-500 rounded-md hover:bg-green-600"
+                  className={`px-4 py-2 text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors ${
+                    method.stateMutability === 'view' || method.stateMutability === 'pure'
+                      ? 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
+                      : 'bg-yellow-600 hover:bg-yellow-700 focus:ring-yellow-500'
+                  }`}
                 >
                   {method.stateMutability === 'view' || method.stateMutability === 'pure'
                     ? 'Call'
@@ -375,16 +416,20 @@ export default function ContractInteraction() {
               {/* Show method-specific results */}
               {results.filter(r => r.methodName === method.name).map((result) => (
                 <div key={result.timestamp} 
-                     className={`mt-4 p-3 rounded-md ${result.error ? 'bg-red-50' : 'bg-green-50'}`}>
-                  <div className="flex justify-between">
-                    <span className="text-sm text-gray-500">
+                     className={`mt-4 p-4 rounded-md border ${
+                       result.error 
+                         ? 'bg-red-50 border-red-200 text-red-700' 
+                         : 'bg-green-50 border-green-200 text-green-700'
+                     }`}>
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm opacity-75">
                       {new Date(result.timestamp).toLocaleTimeString()}
                     </span>
                   </div>
                   {result.error ? (
-                    <div className="text-red-600 mt-1">{result.result}</div>
+                    <div className="text-red-600">{result.result}</div>
                   ) : (
-                    <pre className="mt-1 font-mono text-sm break-all whitespace-pre-wrap overflow-x-auto">
+                    <pre className="mt-2 p-3 bg-white border border-gray-100 rounded font-mono text-sm break-all whitespace-pre-wrap overflow-x-auto">
                       {result.result}
                     </pre>
                   )}
