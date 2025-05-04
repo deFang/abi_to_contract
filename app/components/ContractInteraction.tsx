@@ -125,53 +125,53 @@ export default function ContractInteraction() {
   // Define input types for contract methods
   type MethodInputValue = string | number | boolean | bigint;
 
-  const formatResult = (result: unknown, method: ContractMethod): string => {
+  // Recursive result formatter for nested structs/tuples
+  const formatResult = (result: unknown, abiOutput: ContractMethodOutput | ContractMethodOutput[]): string => {
     if (result === null || result === undefined) {
       return 'null';
     }
 
-    // Handle array-like results (including tuples)
-    if (result && typeof result === 'object' && !Array.isArray(result)) {
-      const resultObj = result as ContractResultObject;
-      
-      // Check if it's a numeric-keyed object (like [0,1,2] but as an object)
-      const keys = Object.keys(resultObj);
-      const isNumericKeys = keys.every(key => !isNaN(Number(key)));
-      
-      if (isNumericKeys) {
-        // Create an array of formatted values using the method outputs
-        const formattedValues = method.outputs.map((output, index) => {
-          const value = resultObj[index.toString()];
-          const name = output.name.replace(/^_/, ''); // Remove leading underscore
-          
-          let formattedValue: string;
-          if (typeof value === 'bigint') {
-            formattedValue = value.toString();
-          } else if (typeof value === 'string' && value.startsWith('0x')) {
-            formattedValue = value;
-          } else if (typeof value === 'number' || (typeof value === 'string' && !isNaN(Number(value)))) {
-            formattedValue = BigInt(value.toString()).toString();
-          } else {
-            formattedValue = String(value);
-          }
-          
-          return `${name}: ${formattedValue}`;
+    // If abiOutput is an array, treat as tuple root or top-level output
+    if (Array.isArray(abiOutput)) {
+      // Handle array-like object (ethers.js result)
+      if ((typeof result === 'object' && result !== null && !Array.isArray(result)) || Array.isArray(result)) {
+        const resultObj = result as ContractResultObject;
+        const formattedValues = abiOutput.map((output: ContractMethodOutput, idx: number) => {
+          // Try both numeric and named keys for robustness
+          const value = resultObj[idx] ?? resultObj[idx.toString()] ?? resultObj[output.name];
+          return `${output.name}: ${formatResult(value, output)}`;
         });
-        
-        return `{\n  ${formattedValues.join(',\n  ')}\n}`;
+        return `{
+  ${formattedValues.join(',\n  ')}
+}`;
       }
     }
 
-    // Handle arrays
-    if (Array.isArray(result)) {
-      const formattedValues = result.map((value, index) => {
-        const name = method.outputs[index]?.name?.replace(/^_/, '') || `output${index}`;
-        return `${name}: ${formatResult(value, method)}`;
-      });
-      return `{\n  ${formattedValues.join(',\n  ')}\n}`;
+    // If abiOutput is a tuple
+    if (!Array.isArray(abiOutput) && typeof abiOutput === 'object' && abiOutput.type === 'tuple' && abiOutput.components) {
+      // Handle both array and object representations of a tuple
+      if ((typeof result === 'object' && result !== null) || Array.isArray(result)) {
+        const resultObj = result as ContractResultObject | Array<unknown>;
+        const formattedValues = abiOutput.components.map((comp: ContractMethodOutput, idx: number) => {
+          const value = Array.isArray(resultObj) ? resultObj[idx] : (resultObj[idx] ?? resultObj[idx.toString()] ?? resultObj[comp.name]);
+          return `${comp.name}: ${formatResult(value, comp)}`;
+        });
+        return `{
+  ${formattedValues.join(',\n  ')}
+}`;
+      }
+      // If it's an array of tuples
+      if (Array.isArray(result)) {
+        return '[\n' + result.map((item) => formatResult(item, abiOutput.components!)).join(',\n') + '\n]';
+      }
     }
 
-    // Handle single values
+    // Handle arrays of primitives
+    if (Array.isArray(result)) {
+      return '[ ' + result.map((v) => formatResult(v, abiOutput)).join(', ') + ' ]';
+    }
+
+    // Handle primitive types
     if (typeof result === 'bigint') {
       return result.toString();
     }
@@ -181,7 +181,6 @@ export default function ContractInteraction() {
     if (typeof result === 'number' || (typeof result === 'string' && !isNaN(Number(result)))) {
       return BigInt(result).toString();
     }
-    
     return String(result);
   };
 
@@ -230,7 +229,7 @@ export default function ContractInteraction() {
         setResults(prev => [updatedResult, ...prev.slice(1)]);
       } else {
         // For view/pure calls, format the result as before
-        const formattedResult = formatResult(result, method);
+        const formattedResult = formatResult(result, method.outputs);
         console.log('Formatted result:', formattedResult);
         const newResult: MethodResult = {
           methodName: method.name,
