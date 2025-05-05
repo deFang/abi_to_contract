@@ -151,9 +151,14 @@ export default function ContractInteraction() {
     if (!Array.isArray(abiOutput) && typeof abiOutput === 'object' && abiOutput.type === 'tuple' && abiOutput.components) {
       // Handle both array and object representations of a tuple
       if ((typeof result === 'object' && result !== null) || Array.isArray(result)) {
-        const resultObj = result as ContractResultObject | Array<unknown>;
+        const resultObj: Record<string, unknown> | Array<unknown> = result as Record<string, unknown> | Array<unknown>;
         const formattedValues = abiOutput.components.map((comp: ContractMethodOutput, idx: number) => {
-          const value = Array.isArray(resultObj) ? resultObj[idx] : (resultObj[idx] ?? resultObj[idx.toString()] ?? resultObj[comp.name]);
+          let value: unknown;
+          if (Array.isArray(resultObj)) {
+            value = resultObj[idx];
+          } else {
+            value = (resultObj as Record<string, unknown>)[comp.name] ?? (resultObj as Record<string, unknown>)[idx] ?? (resultObj as Record<string, unknown>)[idx.toString()];
+          }
           return `${comp.name}: ${formatResult(value, comp)}`;
         });
         return `{
@@ -344,8 +349,9 @@ export default function ContractInteraction() {
                 onSubmit={(e) => {
                   e.preventDefault();
                   const formData = new FormData(e.currentTarget);
-                  const args = method.inputs.map(input => {
-                    const value = formData.get(input.name);
+                  const args = method.inputs.map((input, idx) => {
+                    const inputName = input.name && input.name.length > 0 ? input.name : `arg${idx}`;
+                    const value = formData.get(inputName);
                     const strValue = value?.toString() || '';
 
                     // Handle different input types
@@ -385,19 +391,22 @@ export default function ContractInteraction() {
                 }}
                 className="mt-4 space-y-3"
               >
-                {method.inputs.map((input) => (
-                  <div key={input.name} className="space-y-1">
-                    <label className="block text-sm font-medium text-gray-700">
-                      {input.name} <span className="text-gray-500">({input.type})</span>
-                    </label>
-                    <input
-                      type="text"
-                      name={input.name}
-                      className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder={input.type === 'bytes32' ? 'Enter hex string (0x...) or value to convert' : `Enter ${input.type}`}
-                    />
-                  </div>
-                ))}
+                {method.inputs.map((input, idx) => {
+                  const inputName = input.name && input.name.length > 0 ? input.name : `arg${idx}`;
+                  return (
+                    <div key={inputName} className="space-y-1">
+                      <label className="block text-sm font-medium text-gray-700">
+                        {inputName} <span className="text-gray-500">({input.type})</span>
+                      </label>
+                      <input
+                        type="text"
+                        name={inputName}
+                        className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder={input.type === 'bytes32' ? 'Enter hex string (0x...) or value to convert' : `Enter ${input.type}`}
+                      />
+                    </div>
+                  );
+                })}
                 <button
                   type="submit"
                   className={`px-4 py-2 text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors ${
