@@ -214,7 +214,7 @@ export default function ContractInteraction() {
 
     // Handle arrays of primitives
     if (Array.isArray(result)) {
-      return '[ ' + result.map((v, idx) => {
+      return '[ ' + result.map((v) => {
         if (typeof v === 'string' && v.startsWith('0x')) {
           return v; // Address or hex value
         }
