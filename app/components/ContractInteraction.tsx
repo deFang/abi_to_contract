@@ -133,17 +133,52 @@ export default function ContractInteraction() {
 
     // If abiOutput is an array, treat as tuple root or top-level output
     if (Array.isArray(abiOutput)) {
+      // Special case: if we have a single output that is an array type, and result is an array
+      if (abiOutput.length === 1 && abiOutput[0].type.includes('[]') && Array.isArray(result)) {
+        return formatResult(result, abiOutput[0]);
+      }
+      
       // Handle array-like object (ethers.js result)
       if ((typeof result === 'object' && result !== null && !Array.isArray(result)) || Array.isArray(result)) {
         const resultObj = result as ContractResultObject;
+        
+        // Check if we have enough outputs for the result
         const formattedValues = abiOutput.map((output: ContractMethodOutput, idx: number) => {
           // Try both numeric and named keys for robustness
-          const value = resultObj[idx] ?? resultObj[idx.toString()] ?? resultObj[output.name];
+          let value: unknown;
+          
+          // For array-like objects, try different access patterns
+          if (Array.isArray(resultObj)) {
+            value = idx < resultObj.length ? resultObj[idx] : undefined;
+          } else {
+            value = resultObj[idx] ?? resultObj[idx.toString()] ?? resultObj[output.name];
+          }
+          
+          // If value is still undefined, skip this output
+          if (value === undefined) {
+            return null;
+          }
+          
           return `${output.name}: ${formatResult(value, output)}`;
-        });
+        }).filter(v => v !== null); // Remove null entries
+        
         return `{
   ${formattedValues.join(',\n  ')}
 }`;
+      }
+    }
+
+    // If abiOutput is a single output with array type (like address[])
+    if (!Array.isArray(abiOutput) && typeof abiOutput === 'object' && abiOutput.type.includes('[]')) {
+      if (Array.isArray(result)) {
+        // Handle array of primitives (like address[])
+        const baseType = abiOutput.type.replace('[]', '');
+        return '[\n  ' + result.map((item, idx) => {
+          if (baseType === 'address' && typeof item === 'string') {
+            return item;
+          }
+          return formatResult(item, { name: `item${idx}`, type: baseType });
+        }).join(',\n  ') + '\n]';
       }
     }
 
@@ -155,12 +190,18 @@ export default function ContractInteraction() {
         const formattedValues = abiOutput.components.map((comp: ContractMethodOutput, idx: number) => {
           let value: unknown;
           if (Array.isArray(resultObj)) {
-            value = resultObj[idx];
+            value = idx < resultObj.length ? resultObj[idx] : undefined;
           } else {
             value = (resultObj as Record<string, unknown>)[comp.name] ?? (resultObj as Record<string, unknown>)[idx] ?? (resultObj as Record<string, unknown>)[idx.toString()];
           }
+          
+          if (value === undefined) {
+            return null;
+          }
+          
           return `${comp.name}: ${formatResult(value, comp)}`;
-        });
+        }).filter(v => v !== null);
+        
         return `{
   ${formattedValues.join(',\n  ')}
 }`;
@@ -173,7 +214,12 @@ export default function ContractInteraction() {
 
     // Handle arrays of primitives
     if (Array.isArray(result)) {
-      return '[ ' + result.map((v) => formatResult(v, abiOutput)).join(', ') + ' ]';
+      return '[ ' + result.map((v, idx) => {
+        if (typeof v === 'string' && v.startsWith('0x')) {
+          return v; // Address or hex value
+        }
+        return formatResult(v, Array.isArray(abiOutput) ? abiOutput[0] : abiOutput);
+      }).join(', ') + ' ]';
     }
 
     // Handle primitive types
@@ -193,6 +239,8 @@ export default function ContractInteraction() {
     if (!contract) return;
 
     try {
+
+      
       let result;
       if (method.stateMutability === 'view' || method.stateMutability === 'pure') {
         // For view/pure calls, use block number if specified
@@ -202,14 +250,14 @@ export default function ContractInteraction() {
         } else {
           result = await methodFn(...args);
         }
-      } else {
-        // For non-view methods, always use signer
-        const contractWithSigner = contract.connect(signer);
-        const methodFn = contractWithSigner.getFunction(method.name);
-        result = await methodFn(...args);
-      }
+              } else {
+          // For non-view methods, always use signer
+          const contractWithSigner = contract.connect(signer);
+          const methodFn = contractWithSigner.getFunction(method.name);
+          result = await methodFn(...args);
+        }
 
-      console.log('Raw result:', result);
+        console.log('Raw result:', result);
       
       // Handle transaction result differently from view/pure call result
       if (method.stateMutability !== 'view' && method.stateMutability !== 'pure') {
@@ -235,7 +283,6 @@ export default function ContractInteraction() {
       } else {
         // For view/pure calls, format the result as before
         const formattedResult = formatResult(result, method.outputs);
-        console.log('Formatted result:', formattedResult);
         const newResult: MethodResult = {
           methodName: method.name,
           timestamp: new Date().toISOString(),
